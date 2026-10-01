@@ -25,25 +25,25 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-// Link de descarga de tu app de TV
+// Link de descarga de la app de TV
 const val APK_URL = "https://github.com/mac-donal/apk/releases/download/tvplus2/tvplus2-2026.apk"
-
 const val DEFAULT_SEQ = "TAB,USER,ENTER,PASS,ENTER,DOWN,OK"
 
 class MainActivity : Activity() {
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var ip: EditText
-    private lateinit var user: EditText
+    private lateinit var email: EditText
     private lateinit var pass: EditText
-    private lateinit var pkg: EditText
+    private lateinit var logView: TextView
+    private lateinit var choose: LinearLayout
+    private lateinit var advanced: LinearLayout
+    // Ajustes ocultos (mantener apretado el titulo para verlos)
+    private lateinit var ipManual: EditText
+    private lateinit var pkgManual: EditText
     private lateinit var wait: EditText
     private lateinit var delay: EditText
     private lateinit var seq: EditText
     private lateinit var seq2: EditText
-    private lateinit var logView: TextView
-    private lateinit var found: LinearLayout
-    private lateinit var settings: LinearLayout
 
     private val bg = Executors.newCachedThreadPool()
     @Volatile private var busy = false
@@ -56,57 +56,56 @@ class MainActivity : Activity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(24), dp(16), dp(24))
+            setPadding(dp(20), dp(32), dp(20), dp(24))
         }
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
+        setContentView(ScrollView(this).apply { addView(root) })
 
-        root.addView(TextView(this).apply { text = "TV Installer"; textSize = 24f })
-
-        // IP + buscar
-        ip = field(root, "IP del TV", "192.168.43.xx", "ip", "", InputType.TYPE_CLASS_PHONE)
-        root.addView(button("Buscar TVs en la red") { scan() })
-        found = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(found)
-
-        // Cuenta
-        user = field(root, "Usuario", "", "user", "", plainText())
-        pass = field(root, "Clave", "", "pass", "", plainText())
-
-        root.addView(button("Instalar y entrar", Color.parseColor("#0A6CFF")) { flow(true) })
-        root.addView(button("Solo cargar cuenta (app ya instalada)") { flow(false) })
-
-        // Ajustes
-        settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        pkg = field(settings, "Paquete de la app (se detecta solo)", "", "pkg", "", plainText())
-        wait = field(settings, "Espera tras abrir la app (seg)", "", "wait", "6", InputType.TYPE_CLASS_NUMBER)
-        delay = field(settings, "Pausa entre pasos (milisegundos)", "", "delay", "600", InputType.TYPE_CLASS_NUMBER)
-        seq = field(settings, "Secuencia de login. Pasos separados por coma: USER, PASS, TAB, ENTER, OK, UP, DOWN, LEFT, RIGHT, BACK, HOME, w2 (esperar 2s), L:OK (OK largo), o un numero de tecla",
-            "", "seq", DEFAULT_SEQ, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
-        seq2 = field(settings, "Secuencia extra al final (experimental, ej. para acomodar la app en el inicio)",
-            "", "seq2", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
-        settings.addView(button("Re-descargar APK la proxima vez") {
-            File(cacheDir, "tv.apk").delete(); log("Se descargara de nuevo en la proxima instalacion.")
+        root.addView(TextView(this).apply {
+            text = "TVA Instalador"
+            textSize = 26f
+            setOnLongClickListener {
+                advanced.visibility = if (advanced.visibility == View.GONE) View.VISIBLE else View.GONE
+                true
+            }
         })
-        root.addView(button("Ajustes") {
-            settings.visibility = if (settings.visibility == View.GONE) View.VISIBLE else View.GONE
-        })
-        root.addView(settings)
+
+        email = field(root, "Correo", "usuario@correo.com", "user", "",
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        pass = field(root, "Contrasena", "", "pass", "", plainText())
+
+        root.addView(button("Instalar y entrar", Color.parseColor("#0A6CFF")) { start(null) })
+
+        choose = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(choose)
 
         logView = TextView(this).apply {
             setTextIsSelectable(true)
             textSize = 14f
             setPadding(0, dp(16), 0, 0)
-            text = "Listo."
         }
         root.addView(logView)
+
+        // ----- Ajustes ocultos -----
+        advanced = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        ipManual = field(advanced, "IP del TV (vacio = buscar solo)", "", "ipManual", "", InputType.TYPE_CLASS_PHONE)
+        pkgManual = field(advanced, "Paquete de la app (vacio = detectar solo)", "", "pkgManual", "", plainText())
+        wait = field(advanced, "Espera tras abrir la app (seg)", "", "wait", "6", InputType.TYPE_CLASS_NUMBER)
+        delay = field(advanced, "Pausa entre pasos (ms)", "", "delay", "600", InputType.TYPE_CLASS_NUMBER)
+        seq = field(advanced, "Secuencia de login (USER, PASS, TAB, ENTER, OK, UP, DOWN, LEFT, RIGHT, BACK, HOME, w2, L:OK)",
+            "", "seq", DEFAULT_SEQ, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        seq2 = field(advanced, "Secuencia extra al final (experimental)",
+            "", "seq2", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        advanced.addView(button("Re-descargar APK la proxima vez") {
+            File(cacheDir, "tv.apk").delete(); log("Se descargara de nuevo.")
+        })
+        root.addView(advanced)
     }
 
     private fun plainText() =
         InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
 
     private fun field(parent: LinearLayout, label: String, hint: String, key: String, def: String, type: Int): EditText {
-        parent.addView(TextView(this).apply { text = label; textSize = 13f; setPadding(0, dp(12), 0, 0) })
+        parent.addView(TextView(this).apply { text = label; textSize = 13f; setPadding(0, dp(14), 0, 0) })
         val e = EditText(this).apply {
             this.hint = hint
             inputType = type
@@ -121,130 +120,137 @@ class MainActivity : Activity() {
         Button(this).apply {
             this.text = text
             isAllCaps = false
-            textSize = 16f
+            textSize = 17f
             if (color != null) { setBackgroundColor(color); setTextColor(Color.WHITE) }
             setOnClickListener { onClick() }
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
+            ).apply { topMargin = dp(14) }
         }
 
     private fun log(msg: String) = runOnUiThread { logView.append("\n$msg") }
 
     private fun saveAll() {
         val e = prefs.edit()
-        listOf(ip, user, pass, pkg, wait, delay, seq, seq2).forEach {
+        listOf(email, pass, ipManual, pkgManual, wait, delay, seq, seq2).forEach {
             e.putString(it.tag as String, it.text.toString())
         }
         e.apply()
     }
 
-    // ---------- Buscar TVs ----------
-    private fun scan() {
-        found.removeAllViews()
-        found.addView(TextView(this).apply { text = "Buscando..." })
-        bg.execute {
-            val hits = ConcurrentLinkedQueue<String>()
-            val subnets = try {
-                Collections.list(NetworkInterface.getNetworkInterfaces())
-                    .filter { it.isUp && !it.isLoopback }
-                    .flatMap { Collections.list(it.inetAddresses) }
-                    .filterIsInstance<Inet4Address>()
-                    .filter { it.isSiteLocalAddress }
-                    .map { it.hostAddress!!.substringBeforeLast('.') }
-                    .distinct()
-            } catch (e: Exception) { emptyList() }
-
-            val pool = Executors.newFixedThreadPool(64)
-            for (s in subnets) for (i in 1..254) pool.execute {
-                val host = "$s.$i"
-                try {
-                    Socket().use { it.connect(InetSocketAddress(host, 5555), 500); hits.add(host) }
-                } catch (_: Exception) {}
-            }
-            pool.shutdown()
-            pool.awaitTermination(40, TimeUnit.SECONDS)
-
-            runOnUiThread {
-                found.removeAllViews()
-                if (hits.isEmpty()) {
-                    found.addView(TextView(this).apply {
-                        text = "No encontre TVs con depuracion ADB. Revisa que este activada y en la misma red."
-                    })
-                } else hits.sorted().forEach { h ->
-                    found.addView(button("Usar $h") { ip.setText(h) })
-                }
-            }
-        }
-    }
-
-    // ---------- Flujo principal ----------
-    private fun flow(install: Boolean) {
+    // ---------- Inicio: busca el TV solo y hace todo ----------
+    private fun start(host: String?) {
         if (busy) return
+        if (email.text.isBlank() || pass.text.isBlank()) {
+            logView.text = "Escribi el correo y la contrasena."
+            return
+        }
         busy = true
         saveAll()
-        logView.text = "Iniciando..."
+        choose.removeAllViews()
+        logView.text = if (host == null) "Buscando el TV en la red..." else "Conectando..."
         bg.execute {
-            try { doFlow(install) } catch (e: Exception) { log("Error: ${e.message ?: e.toString()}") }
+            try {
+                val manual = ipManual.text.toString().trim()
+                val target = host ?: if (manual.isNotEmpty()) manual else null
+                if (target != null) {
+                    doFlow(target)
+                } else {
+                    val tvs = findTvs()
+                    when {
+                        tvs.isEmpty() -> log(
+                            "No encontre ningun TV. Revisa que este conectado a tu hotspot/Wi-Fi " +
+                            "y que tenga la depuracion ADB activada."
+                        )
+                        tvs.size == 1 -> { log("TV encontrado: ${tvs[0]}"); doFlow(tvs[0]) }
+                        else -> {
+                            log("Encontre ${tvs.size} TVs. Elegi cual:")
+                            runOnUiThread {
+                                tvs.forEach { h -> choose.addView(button("TV $h") { start(h) }) }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                log("Error: ${e.message ?: e.toString()}")
+            }
             busy = false
         }
     }
 
-    private fun doFlow(install: Boolean) {
-        val host = ip.text.toString().trim()
-        if (host.isEmpty()) { log("Falta la IP del TV."); return }
+    private fun canConnect(host: String, timeout: Int = 500): Boolean = try {
+        Socket().use { it.connect(InetSocketAddress(host, 5555), timeout); true }
+    } catch (_: Exception) { false }
 
+    private fun findTvs(): List<String> {
+        // Primero prueba el ultimo TV usado
+        val last = prefs.getString("lastip", null)
+        if (last != null && canConnect(last, 800)) return listOf(last)
+
+        val hits = ConcurrentLinkedQueue<String>()
+        val subnets = try {
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { Collections.list(it.inetAddresses) }
+                .filterIsInstance<Inet4Address>()
+                .filter { it.isSiteLocalAddress }
+                .map { it.hostAddress!!.substringBeforeLast('.') }
+                .distinct()
+        } catch (e: Exception) { emptyList() }
+
+        val pool = Executors.newFixedThreadPool(64)
+        for (s in subnets) for (i in 1..254) pool.execute {
+            val h = "$s.$i"
+            if (canConnect(h)) hits.add(h)
+        }
+        pool.shutdown()
+        pool.awaitTermination(40, TimeUnit.SECONDS)
+        return hits.sorted()
+    }
+
+    // ---------- Flujo principal ----------
+    private fun doFlow(host: String) {
         log("Conectando a $host... (la primera vez, acepta el cartel en el TV)")
         val dadb = Dadb.create(host, 5555, keyPair())
         try {
             log("Conectado: " + dadb.shell("getprop ro.product.model").output.trim())
+            prefs.edit().putString("lastip", host).apply()
 
-            if (install) {
-                val apk = ensureApk()
-                val before = packages(dadb)
-                log("Instalando en el TV...")
-                dadb.push(apk, "/data/local/tmp/tvapp.apk")
-                val r = dadb.shell("pm install -r /data/local/tmp/tvapp.apk")
-                dadb.shell("rm /data/local/tmp/tvapp.apk")
-                if (!r.allOutput.contains("Success")) { log("Fallo la instalacion: ${r.allOutput.trim()}"); return }
-                log("Instalada.")
-                val diff = packages(dadb) - before
-                if (diff.size == 1) {
-                    val p = diff.first()
-                    prefs.edit().putString("pkg", p).apply()
-                    runOnUiThread { pkg.setText(p) }
-                    log("Paquete detectado: $p")
-                }
-            }
+            val apk = ensureApk()
+            val before = packages(dadb)
+            log("Instalando la app en el TV...")
+            dadb.push(apk, "/data/local/tmp/tvapp.apk")
+            val r = dadb.shell("pm install -r /data/local/tmp/tvapp.apk")
+            dadb.shell("rm /data/local/tmp/tvapp.apk")
+            if (!r.allOutput.contains("Success")) { log("Fallo la instalacion: ${r.allOutput.trim()}"); return }
+            log("Instalada.")
 
-            val p = pkg.text.toString().trim()
-            if (p.isEmpty()) {
-                log("No se el paquete de la app. Abri Ajustes y escribilo (o desinstala la app del TV y volve a instalar).")
-                return
-            }
+            // Paquete: manual > leido del propio APK > diferencia de apps > recordado
+            var p = pkgManual.text.toString().trim()
+            if (p.isEmpty()) p = packageManager.getPackageArchiveInfo(apk.absolutePath, 0)?.packageName ?: ""
+            if (p.isEmpty()) (packages(dadb) - before).singleOrNull()?.let { p = it }
+            if (p.isEmpty()) p = prefs.getString("pkg", "") ?: ""
+            if (p.isEmpty()) { log("No pude detectar el paquete de la app."); return }
+            prefs.edit().putString("pkg", p).apply()
 
             log("Abriendo la app...")
             dadb.shell("am force-stop $p")
             Thread.sleep(1000)
             var out = dadb.shell("monkey -p $p -c android.intent.category.LEANBACK_LAUNCHER 1").allOutput
             if (out.contains("No activities found") || out.contains("aborted")) {
-                out = dadb.shell("monkey -p $p -c android.intent.category.LAUNCHER 1").allOutput
+                dadb.shell("monkey -p $p -c android.intent.category.LAUNCHER 1")
             }
 
-            val u = user.text.toString()
+            val u = email.text.toString()
             val pw = pass.text.toString()
             val pause = delay.text.toString().toLongOrNull() ?: 600L
-            if (u.isNotEmpty()) {
-                val secs = wait.text.toString().toLongOrNull() ?: 6L
-                log("Esperando ${secs}s a que cargue el login...")
-                Thread.sleep(secs * 1000)
-                runSeq(dadb, seq.text.toString().ifBlank { DEFAULT_SEQ }, u, pw, pause)
-            }
+            val secs = wait.text.toString().toLongOrNull() ?: 6L
+            log("Esperando a que cargue el login...")
+            Thread.sleep(secs * 1000)
+            runSeq(dadb, seq.text.toString().ifBlank { DEFAULT_SEQ }, u, pw, pause)
+
             val extra = seq2.text.toString()
-            if (extra.isNotBlank()) {
-                log("Secuencia extra...")
-                runSeq(dadb, extra, u, pw, pause)
-            }
+            if (extra.isNotBlank()) { log("Secuencia extra..."); runSeq(dadb, extra, u, pw, pause) }
             log("Listo.")
         } finally {
             try { dadb.close() } catch (_: Exception) {}
@@ -267,8 +273,8 @@ class MainActivity : Activity() {
             val up = t.uppercase()
             val secs = if (up.startsWith("W")) up.drop(1).toDoubleOrNull() else null
             when {
-                up == "USER" || up == "{USER}" -> { log("> usuario"); sendText(d, u) }
-                up == "PASS" || up == "{PASS}" -> { log("> clave"); sendText(d, pw) }
+                up == "USER" || up == "{USER}" -> { log("> correo"); sendText(d, u) }
+                up == "PASS" || up == "{PASS}" -> { log("> contrasena"); sendText(d, pw) }
                 secs != null -> { log("> esperar ${secs}s"); Thread.sleep((secs * 1000).toLong()) }
                 else -> {
                     val long = up.startsWith("L:")
