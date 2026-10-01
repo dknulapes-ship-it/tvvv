@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 
 // Link de descarga de la app de TV
 const val APK_URL = "https://github.com/mac-donal/apk/releases/download/tvplus2/tvplus2-2026.apk"
-const val DEFAULT_SEQ = "TAB,USER,ENTER,PASS,ENTER,DOWN,OK"
+const val DEFAULT_SEQ = "TAB,USER,ENTER,PASS,ENTER,OK"
 
 class MainActivity : Activity() {
 
@@ -53,6 +53,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("cfg", MODE_PRIVATE)
+        // Migracion: reemplaza la secuencia anterior que terminaba en "olvide contrasena"
+        if (prefs.getString("seq", null) == "TAB,USER,ENTER,PASS,ENTER,DOWN,OK") {
+            prefs.edit().remove("seq").apply()
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
