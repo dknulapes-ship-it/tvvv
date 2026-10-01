@@ -28,6 +28,8 @@ import java.util.concurrent.TimeUnit
 // Link de descarga de tu app de TV
 const val APK_URL = "https://github.com/mac-donal/apk/releases/download/tvplus2/tvplus2-2026.apk"
 
+const val DEFAULT_SEQ = "TAB,USER,ENTER,PASS,ENTER,DOWN,OK"
+
 class MainActivity : Activity() {
 
     private lateinit var prefs: SharedPreferences
@@ -36,9 +38,9 @@ class MainActivity : Activity() {
     private lateinit var pass: EditText
     private lateinit var pkg: EditText
     private lateinit var wait: EditText
-    private lateinit var pre: EditText
-    private lateinit var between: EditText
-    private lateinit var after: EditText
+    private lateinit var delay: EditText
+    private lateinit var seq: EditText
+    private lateinit var seq2: EditText
     private lateinit var logView: TextView
     private lateinit var found: LinearLayout
     private lateinit var settings: LinearLayout
@@ -77,10 +79,12 @@ class MainActivity : Activity() {
         // Ajustes
         settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         pkg = field(settings, "Paquete de la app (se detecta solo)", "", "pkg", "", plainText())
-        wait = field(settings, "Espera tras abrir (seg)", "", "wait", "6", InputType.TYPE_CLASS_NUMBER)
-        pre = field(settings, "Teclas antes del usuario (ej: 23)", "", "pre", "", plainText())
-        between = field(settings, "Teclas entre usuario y clave (61=TAB, 20=ABAJO)", "", "between", "61", plainText())
-        after = field(settings, "Teclas al final (66=ENTER)", "", "after", "66", plainText())
+        wait = field(settings, "Espera tras abrir la app (seg)", "", "wait", "6", InputType.TYPE_CLASS_NUMBER)
+        delay = field(settings, "Pausa entre pasos (milisegundos)", "", "delay", "600", InputType.TYPE_CLASS_NUMBER)
+        seq = field(settings, "Secuencia de login. Pasos separados por coma: USER, PASS, TAB, ENTER, OK, UP, DOWN, LEFT, RIGHT, BACK, HOME, w2 (esperar 2s), L:OK (OK largo), o un numero de tecla",
+            "", "seq", DEFAULT_SEQ, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        seq2 = field(settings, "Secuencia extra al final (experimental, ej. para acomodar la app en el inicio)",
+            "", "seq2", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
         settings.addView(button("Re-descargar APK la proxima vez") {
             File(cacheDir, "tv.apk").delete(); log("Se descargara de nuevo en la proxima instalacion.")
         })
@@ -129,7 +133,7 @@ class MainActivity : Activity() {
 
     private fun saveAll() {
         val e = prefs.edit()
-        listOf(ip, user, pass, pkg, wait, pre, between, after).forEach {
+        listOf(ip, user, pass, pkg, wait, delay, seq, seq2).forEach {
             e.putString(it.tag as String, it.text.toString())
         }
         e.apply()
@@ -220,6 +224,8 @@ class MainActivity : Activity() {
             }
 
             log("Abriendo la app...")
+            dadb.shell("am force-stop $p")
+            Thread.sleep(1000)
             var out = dadb.shell("monkey -p $p -c android.intent.category.LEANBACK_LAUNCHER 1").allOutput
             if (out.contains("No activities found") || out.contains("aborted")) {
                 out = dadb.shell("monkey -p $p -c android.intent.category.LAUNCHER 1").allOutput
@@ -227,17 +233,17 @@ class MainActivity : Activity() {
 
             val u = user.text.toString()
             val pw = pass.text.toString()
+            val pause = delay.text.toString().toLongOrNull() ?: 600L
             if (u.isNotEmpty()) {
                 val secs = wait.text.toString().toLongOrNull() ?: 6L
                 log("Esperando ${secs}s a que cargue el login...")
                 Thread.sleep(secs * 1000)
-                sendKeys(dadb, pre.text.toString())
-                log("Escribiendo usuario...")
-                sendText(dadb, u)
-                sendKeys(dadb, between.text.toString())
-                log("Escribiendo clave...")
-                sendText(dadb, pw)
-                sendKeys(dadb, after.text.toString())
+                runSeq(dadb, seq.text.toString().ifBlank { DEFAULT_SEQ }, u, pw, pause)
+            }
+            val extra = seq2.text.toString()
+            if (extra.isNotBlank()) {
+                log("Secuencia extra...")
+                runSeq(dadb, extra, u, pw, pause)
             }
             log("Listo.")
         } finally {
@@ -249,10 +255,31 @@ class MainActivity : Activity() {
         d.shell("pm list packages -3").output.lines()
             .map { it.trim().removePrefix("package:") }.filter { it.isNotEmpty() }.toSet()
 
-    private fun sendKeys(d: Dadb, keys: String) {
-        keys.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach {
-            d.shell("input keyevent $it")
-            Thread.sleep(400)
+    private val keyNames = mapOf(
+        "OK" to 23, "ENTER" to 66, "TAB" to 61, "UP" to 19, "DOWN" to 20,
+        "LEFT" to 21, "RIGHT" to 22, "BACK" to 4, "HOME" to 3, "MENU" to 82, "DEL" to 67
+    )
+
+    private fun runSeq(d: Dadb, sequence: String, u: String, pw: String, pause: Long) {
+        for (raw in sequence.split(",")) {
+            val t = raw.trim()
+            if (t.isEmpty()) continue
+            val up = t.uppercase()
+            val secs = if (up.startsWith("W")) up.drop(1).toDoubleOrNull() else null
+            when {
+                up == "USER" || up == "{USER}" -> { log("> usuario"); sendText(d, u) }
+                up == "PASS" || up == "{PASS}" -> { log("> clave"); sendText(d, pw) }
+                secs != null -> { log("> esperar ${secs}s"); Thread.sleep((secs * 1000).toLong()) }
+                else -> {
+                    val long = up.startsWith("L:")
+                    val name = if (long) up.substring(2) else up
+                    val code = keyNames[name] ?: name.toIntOrNull()
+                    if (code == null) { log("> no entiendo el paso: $t"); continue }
+                    log("> tecla $name" + if (long) " (larga)" else "")
+                    d.shell("input keyevent " + (if (long) "--longpress " else "") + code)
+                }
+            }
+            Thread.sleep(pause)
         }
     }
 
