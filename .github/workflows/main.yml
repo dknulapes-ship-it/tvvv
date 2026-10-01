@@ -14,9 +14,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-      - run: gradle assembleDebug --no-daemon
+      - name: Build
+        run: |
+          echo "Archivos en el repo:"
+          find . -not -path './.git/*' -type f | head -40
+          F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -n1)
+          if [ -z "$F" ]; then echo "NO HAY settings.gradle.kts EN EL REPO"; exit 1; fi
+          cd "$(dirname "$F")"
+          gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: TVInstaller
-          path: app/build/outputs/apk/debug/app-debug.apk
-        
+          path: '**/build/outputs/apk/debug/app-debug.apk'
